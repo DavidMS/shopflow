@@ -89,12 +89,12 @@ public Order addItem(OrderItem item) {
 
 `OrderService` solo tiene `cancelOrder()` con lógica de transición. Los demás estados
 (`confirm`, `ship`, `deliver`) no existen todavía — los construyes desde cero directamente
-en `Order`. Después migras `cancelOrder()` para que delegue en `order.cancel()`.
+en `Order`.
 
 Añade en `Order` los métodos que encapsulen las transiciones válidas:
 
 - `confirm()` → solo desde `PENDING`; devuelve `Order` con status `CONFIRMED`
-- `ship(TrackingNumber trackingNumber)` → solo desde `CONFIRMED`; devuelve `Order` con status `SHIPPED`
+- `ship()` → solo desde `CONFIRMED`; devuelve `Order` con status `SHIPPED`
 - `deliver()` → solo desde `SHIPPED`; devuelve `Order` con status `DELIVERED`
 - `cancel()` → solo desde `PENDING` o `CONFIRMED`; devuelve `Order` con status `CANCELLED`
 
@@ -109,6 +109,7 @@ mvn compile -pl shopflow-orders -q
 Pide al agente que genere un test unitario completo para `Order` cubriendo:
 - Happy path de cada transición válida
 - Excepción en cada transición inválida (ej: `deliver()` desde `PENDING`)
+- `addItem()`: añadir un ítem a un pedido `PENDING` (happy path) y la excepción si el pedido no está `PENDING`
 
 ```bash
 mvn test -pl shopflow-orders
@@ -122,7 +123,7 @@ Completa esta tabla antes de hacer el commit final:
 
 | Métrica | Estado inicial | Tu solución |
 |---|---|---|
-| Líneas en `OrderService` | ~80 | ¿? |
+| Métodos semánticos en `Order` | 0 | ¿? métodos |
 | Lógica de transición en dominio | 0 métodos | ¿? métodos semánticos |
 | Tests de transiciones | Ninguno | ¿? tests |
 | `setStatus(String)` | Sí | No |
@@ -171,9 +172,8 @@ Documenta en el commit:
 - `Order.cancel()`, `Order.confirm()`, `Order.ship()`, `Order.deliver()` implementados ✅
 - `Order.addItem(OrderItem item)` implementado, lanza excepción si el pedido no está `PENDING` ✅
 - Cada método lanza `OrderDomainException` para transiciones inválidas ✅
-- `OrderService.cancelOrder()` delega a `order.cancel()` sin lógica propia ✅
-- `OrderService` tiene menos de 30 líneas (excluyendo mappers) ✅
-- Tests unitarios de transiciones de estado en verde ✅
+- `Money.add()`, `Money.multiply()`, `Money.isZero()` implementados con validación no-negativa ✅
+- Tests unitarios de transiciones de estado y `addItem()` en verde ✅
 - `mvn test -pl shopflow-orders` en verde ✅
 
 ---
