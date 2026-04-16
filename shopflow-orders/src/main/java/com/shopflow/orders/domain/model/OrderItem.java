@@ -1,5 +1,7 @@
 package com.shopflow.orders.domain.model;
 
+import java.math.BigDecimal;
+
 /**
  * Represents a line item within an Order.
  * Minimum quantity: 1. Unit price cannot be negative.
@@ -23,6 +25,6 @@ public record OrderItem(
     }
 
     public Money subtotal() {
-        return unitPrice.multiply(quantity);
+        return Money.of(unitPrice.amount().multiply(BigDecimal.valueOf(quantity)));
     }
 }

@@ -1,5 +1,6 @@
 package com.shopflow.orders.domain.model;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 
@@ -34,16 +35,16 @@ public record Order(
     }
 
     public static Order create(CustomerId customerId, List<OrderItem> items, String discountCode) {
-        Money total = items.stream()
-                .map(OrderItem::subtotal)
-                .reduce(Money.zero(), Money::add);
+        BigDecimal totalAmount = items.stream()
+                .map(item -> item.subtotal().amount())
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
 
         return new Order(
                 OrderId.generate(),
                 customerId,
                 items,
                 OrderStatus.PENDING,
-                total,
+                Money.of(totalAmount),
                 discountCode,
                 Instant.now()
         );
