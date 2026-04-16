@@ -2,7 +2,9 @@ package com.shopflow.orders.domain.model;
 
 /**
  * Lifecycle states of an Order.
- * Transitions are enforced by Order domain methods (confirm, ship, deliver, cancel).
+ * Valid transitions (to implement in Order): PENDING → CONFIRMED → SHIPPED → DELIVERED
+ *                                            PENDING → CANCELLED
+ *                                            CONFIRMED → CANCELLED
  */
 public enum OrderStatus {
     PENDING,

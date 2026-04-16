@@ -7,8 +7,9 @@ import java.util.List;
 /**
  * Order Aggregate Root.
  *
- * Encapsulates the lifecycle of a B2B order.
- * Business invariants are enforced here, not in the service layer.
+ * Estado inicial del ejercicio T12: solo tiene create() y el constructor compacto.
+ * Objetivo: añadir addItem(), confirm(), ship(), deliver() y cancel() para que
+ * las invariantes de negocio vivan aquí en lugar de en OrderService.
  */
 public record Order(
         OrderId id,

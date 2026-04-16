@@ -48,7 +48,7 @@ con el objeto de dominio `Order`. Las transiciones de estado las hace sobre un `
 |---|---|
 | Validación de transición de estado en el servicio, no en el agregado | `OrderService.cancelOrder()` |
 | `order.setStatus(String)` — sin type safety, acepta cualquier string | `OrderService.java` |
-| Regla "no cancelar si DELIVERED" fuera del objeto que la posee | `OrderService.java` |
+| Regla "no cancelar si ya está CANCELLED o DELIVERED" fuera del objeto que la posee | `OrderService.java` |
 | `OrderService` trabaja con `OrderEntity` directamente (mezcla capas) | Toda la clase |
 
 ---
@@ -87,8 +87,11 @@ public Order addItem(OrderItem item) {
 
 ### Paso 3 — Añade métodos semánticos de transición de estado
 
-Reemplaza la lógica de `cancelOrder()` y otros métodos de `OrderService` con métodos
-en `Order` que encapsulen las transiciones válidas:
+`OrderService` solo tiene `cancelOrder()` con lógica de transición. Los demás estados
+(`confirm`, `ship`, `deliver`) no existen todavía — los construyes desde cero directamente
+en `Order`. Después migras `cancelOrder()` para que delegue en `order.cancel()`.
+
+Añade en `Order` los métodos que encapsulen las transiciones válidas:
 
 - `confirm()` → solo desde `PENDING`; devuelve `Order` con status `CONFIRMED`
 - `ship(TrackingNumber trackingNumber)` → solo desde `CONFIRMED`; devuelve `Order` con status `SHIPPED`
@@ -166,6 +169,7 @@ Documenta en el commit:
 ## Criterios de éxito ✅
 
 - `Order.cancel()`, `Order.confirm()`, `Order.ship()`, `Order.deliver()` implementados ✅
+- `Order.addItem(OrderItem item)` implementado, lanza excepción si el pedido no está `PENDING` ✅
 - Cada método lanza `OrderDomainException` para transiciones inválidas ✅
 - `OrderService.cancelOrder()` delega a `order.cancel()` sin lógica propia ✅
 - `OrderService` tiene menos de 30 líneas (excluyendo mappers) ✅
