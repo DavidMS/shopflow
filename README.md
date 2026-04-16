@@ -77,17 +77,19 @@ La entidad JPA `OutboxEventEntity` ya existe en `infrastructure/persistence/enti
 El repositorio `JpaOutboxEventRepository` también está creado.
 
 Verifica el schema: `db/schema.sql` debe tener la tabla `outbox_events` con los campos
-`event_id`, `topic`, `event_type`, `payload`, `created_at`, `published_at`.
+`id`, `aggregate_id`, `event_type`, `payload`, `created_at`, `published_at`
+(`published_at` nulo significa pendiente de publicar).
 
 ### Paso 2 — Implementa el relay job
 
 La clase `OutboxEventPublisher` en `infrastructure/messaging/` ya tiene el esqueleto.
-Tu misión es implementar el método `relay()`:
+Tu misión es implementar el método `publishPendingEvents()`:
 
-1. Lee todos los `OutboxEventEntity` con `published_at IS NULL`.
-2. Para cada uno, publica con `kafkaTemplate.send(topic, eventId, payload).get(2, SECONDS)`.
-3. Solo actualiza `published_at` si el `get()` no lanza excepción.
-4. Loguea el resultado de cada publicación con el `eventId` y el tópico.
+1. Lee todos los `OutboxEventEntity` con `published_at IS NULL`: `outboxRepository.findUnpublished()`.
+2. Para cada uno, publica con `kafkaTemplate.send(TOPIC, event.getAggregateId().toString(), event.getPayload()).get(2, TimeUnit.SECONDS)`.
+3. Solo actualiza `published_at` si el `get()` no lanza excepción: `event.setPublishedAt(Instant.now())`.
+4. Loguea el resultado de cada publicación con el `aggregateId` y el tipo de evento.
+   Si falla, loguea el error — el evento queda pendiente y el job lo reintentará en el siguiente ciclo.
 
 ### Paso 3 — Integra con el servicio de aplicación
 

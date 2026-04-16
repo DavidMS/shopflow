@@ -10,7 +10,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
-import java.util.List;
 import java.util.UUID;
 
 /**
@@ -63,26 +62,20 @@ public class OutboxEventPublisher {
     /**
      * Phase 2: poll unpublished events and send to Kafka.
      * Separate transaction — runs independently of order creation.
+     *
+     * TODO Paso 2 — implementa este método:
+     *   1. Lee todos los OutboxEventEntity pendientes: outboxRepository.findUnpublished()
+     *   2. Para cada evento, publica a Kafka con:
+     *        kafkaTemplate.send(TOPIC, event.getAggregateId().toString(), event.getPayload())
+     *                     .get(2, TimeUnit.SECONDS)
+     *   3. Solo actualiza published_at si get() no lanza excepción:
+     *        event.setPublishedAt(Instant.now()); outboxRepository.save(event);
+     *   4. Loguea el resultado de cada publicación con el eventId y el tipo de evento.
+     *      Si falla, loguea el error — el evento queda pendiente y se reintentará en el ciclo siguiente.
      */
     @Scheduled(fixedDelay = 5000)
     @Transactional
     public void publishPendingEvents() {
-        List<OutboxEventEntity> pending = outboxRepository.findUnpublished();
-
-        for (OutboxEventEntity event : pending) {
-            try {
-                kafkaTemplate.send(TOPIC, event.getAggregateId().toString(), event.getPayload())
-                        .get(java.util.concurrent.TimeUnit.SECONDS.toMillis(2),
-                             java.util.concurrent.TimeUnit.MILLISECONDS);
-
-                event.setPublishedAt(Instant.now());
-                outboxRepository.save(event);
-                log.info("Published outbox event: {} for aggregate: {}", event.getEventType(), event.getAggregateId());
-
-            } catch (Exception e) {
-                log.error("Failed to publish outbox event: {} — will retry", event.getId(), e);
-                // No re-throw: the event stays unpublished and will be retried next cycle
-            }
-        }
+        // TODO: implementar
     }
 }
