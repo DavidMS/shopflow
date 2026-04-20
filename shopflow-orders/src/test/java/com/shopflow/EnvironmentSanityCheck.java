@@ -1,8 +1,12 @@
 package com.shopflow;
 
+import com.shopflow.orders.ShopflowApplication;
+import com.shopflow.orders.demo.CompletionAntipatterns;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.kafka.core.KafkaTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -13,8 +17,14 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Ejecutar desde IntelliJ: clic derecho > Run 'EnvironmentSanityCheck'
  * Ejecutar desde terminal: mvn test -pl shopflow-orders -Dtest=EnvironmentSanityCheck
  */
-@SpringBootTest
+@SpringBootTest(classes = ShopflowApplication.class)
 class EnvironmentSanityCheck {
+
+    @MockBean
+    KafkaTemplate<String, String> kafkaTemplate;
+
+    @MockBean
+    CompletionAntipatterns completionAntipatterns;
 
     @Test
     @DisplayName("El contexto de Spring arranca correctamente")

@@ -7,6 +7,8 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import static com.tngtech.archunit.base.DescribedPredicate.not;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 
 /**
@@ -36,10 +38,13 @@ class HexagonalArchitectureTest {
     @Test
     @DisplayName("Domain classes must not use Spring annotations (@Autowired, @Service, @Repository)")
     void domainMustNotUseSpringAnnotations() {
+        // org.springframework.data.domain (Page, Pageable) is accepted in ports as a pragmatic
+        // pagination contract; all other Spring dependencies are forbidden in the domain layer.
         ArchRule rule = noClasses()
                 .that().resideInAPackage("..domain..")
-                .should().dependOnClassesThat()
-                .resideInAPackage("org.springframework..");
+                .should().dependOnClassesThat(
+                        resideInAPackage("org.springframework..")
+                                .and(not(resideInAPackage("org.springframework.data.domain.."))));
 
         rule.check(classes);
     }

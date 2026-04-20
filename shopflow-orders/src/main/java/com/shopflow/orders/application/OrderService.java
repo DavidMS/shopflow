@@ -2,6 +2,7 @@ package com.shopflow.orders.application;
 
 import com.shopflow.orders.application.command.CreateOrderCommand;
 import com.shopflow.orders.domain.model.*;
+import com.shopflow.orders.infrastructure.messaging.NaiveEventPublisher;
 import com.shopflow.orders.infrastructure.persistence.JpaOrderRepository;
 import com.shopflow.orders.infrastructure.persistence.entity.OrderEntity;
 import com.shopflow.orders.infrastructure.persistence.entity.OrderItemEntity;
@@ -22,9 +23,11 @@ import java.util.UUID;
 public class OrderService {
 
     private final JpaOrderRepository orderRepository;
+    private final NaiveEventPublisher eventPublisher;
 
-    public OrderService(JpaOrderRepository orderRepository) {
+    public OrderService(JpaOrderRepository orderRepository, NaiveEventPublisher eventPublisher) {
         this.orderRepository = orderRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     public OrderEntity createOrder(CreateOrderCommand command) {
@@ -52,7 +55,9 @@ public class OrderService {
             order.getItems().add(item);
         });
 
-        return orderRepository.save(order);
+        OrderEntity saved = orderRepository.save(order);
+        eventPublisher.publishOrderCreated(saved.getId());
+        return saved;
     }
 
     @Transactional(readOnly = true)

@@ -1,4 +1,4 @@
-# Tema 13 — Event-Driven Architecture con Copilot
+# Tema 13 — Event-Driven Architecture con IA
 
 ## 🎯 Objetivo
 
@@ -13,8 +13,8 @@ retry ni DLQ. Los dos deben ser reemplazados por implementaciones con garantías
 ```bash
 git checkout exercise/topic-13
 git checkout -b mi-solucion/topic-13
-docker-compose up -d   # levanta Kafka + Zookeeper + Postgres
-mvn test -pl shopflow-orders   # debe pasar el EnvironmentSanityCheck
+docker-compose up -d   # levanta Kafka + Postgres
+mvn test -pl shopflow-orders   # debe pasar en verde
 ```
 
 ---
@@ -23,19 +23,39 @@ mvn test -pl shopflow-orders   # debe pasar el EnvironmentSanityCheck
 
 ### Productor frágil — `NaiveEventPublisher`
 
+`OrderService.createOrder()` llama a `NaiveEventPublisher.publishOrderCreated()` dentro
+de la misma `@Transactional`. El bug: `KafkaTemplate.send()` **no es parte de la
+transacción de base de datos**. Hay escenarios en que la BD confirma y Kafka no (o
+al revés), dejando el sistema en un estado inconsistente.
+
 ```java
 // NaiveEventPublisher.java — el bug
 @Transactional
 public void publishOrderCreated(UUID orderId) {
-    orderRepository.save(order);                       // ① persiste en DB
-    kafkaTemplate.send("order-events", payload);      // ② envía a Kafka
-    // Si Kafka falla en ②: la transacción hace rollback en DB
-    // Si DB confirma en ① y Kafka falla después: la orden existe pero el evento se pierde
+    kafkaTemplate.send("order-events", orderId.toString(), event);
+    // Si Kafka está caído: la transacción de BD hace rollback... pero el orden
+    // ya había sido guardado antes de llegar aquí si el commit ocurrió.
+    // Si Kafka confirma pero una excepción posterior hace rollback en BD:
+    // el evento salió pero la orden no existe → consumidor procesa una orden fantasma.
 }
 ```
 
-El bug del dual-write: DB y Kafka no son parte de la misma transacción.
-Hay escenarios en los que uno confirma y el otro no.
+**Observa el bug antes de modificar nada:**
+
+```bash
+# Crea una orden con Kafka caído
+docker stop shopflow-kafka
+curl -s -X POST http://localhost:8080/api/orders \
+  -H "Content-Type: application/json" \
+  -d '{"customerId":"a0000000-0000-0000-0000-000000000001","items":[{"productId":"b0000000-0000-0000-0000-000000000001","quantity":1,"unitPrice":"29.99"}]}'
+
+# La llamada falla con error de conexión a Kafka — la orden NO se guardó
+# (si el send() lanza antes del commit, la transacción hace rollback)
+
+# Levanta Kafka y comprueba que la orden no existe en la BD:
+docker start shopflow-kafka
+docker exec -it shopflow-postgres psql -U shopflow -c "SELECT id, status FROM orders ORDER BY created_at DESC LIMIT 5;"
+```
 
 ### Consumidor frágil — `NaiveOrderEventConsumer`
 
@@ -44,23 +64,10 @@ Hay escenarios en los que uno confirma y el otro no.
 @KafkaListener(topics = "order-events", groupId = "notifications-group")
 public void onOrderEvent(String message) {
     sendEmail(message);
-    // Si sendEmail() lanza excepción: el mensaje se pierde (auto-commit activado)
-    // Si el servicio se reinicia después del auto-commit: el mensaje no se reprocesal
-    // Sin retry, sin DLQ, sin idempotencia
+    // Si sendEmail() lanza excepción: auto-commit ya confirmó el offset
+    // → el mensaje se pierde silenciosamente
+    // Sin retry, sin DLQ, sin idempotencia, sin contexto en los logs
 }
-```
-
-**Observa los problemas antes de modificar nada:**
-
-```bash
-# Detén el contenedor de Kafka mientras se procesa una orden
-docker stop <kafka-container>
-# Crea una orden → la BD la guarda, el evento nunca sale
-# Levanta Kafka de nuevo → el evento no llega, el cliente no recibe notificación
-docker start <kafka-container>
-
-# Fuerza un error en sendEmail publicando un payload malformado
-# El mensaje se pierde silenciosamente
 ```
 
 ---
@@ -68,46 +75,53 @@ docker start <kafka-container>
 ## Ejercicio 1 — Outbox Pattern: atomicidad garantizada
 
 Reemplaza `NaiveEventPublisher` con un publicador que use el patrón Outbox.
-El evento se guarda en la misma transacción de DB que la entidad de negocio.
+El evento se guarda en la misma transacción de BD que la entidad de negocio.
 Un job `@Scheduled` lo publica a Kafka por separado.
 
-### Paso 1 — Crea la tabla y entidad Outbox
+### Paso 1 — Verifica la infraestructura existente
 
 La entidad JPA `OutboxEventEntity` ya existe en `infrastructure/persistence/entity/`.
-El repositorio `JpaOutboxEventRepository` también está creado.
-
-Verifica el schema: `db/schema.sql` debe tener la tabla `outbox_events` con los campos
-`id`, `aggregate_id`, `event_type`, `payload`, `created_at`, `published_at`
-(`published_at` nulo significa pendiente de publicar).
+El repositorio `JpaOutboxEventRepository` con `findUnpublished()` también está creado.
+Verifica que `db/schema.sql` tiene la tabla `outbox_events` con columna `published_at`
+(`null` = pendiente de publicar).
 
 ### Paso 2 — Implementa el relay job
 
 La clase `OutboxEventPublisher` en `infrastructure/messaging/` ya tiene el esqueleto.
-Tu misión es implementar el método `publishPendingEvents()`:
+Tu misión es implementar el método `publishPendingEvents()` marcado con `// TODO`:
 
-1. Lee todos los `OutboxEventEntity` con `published_at IS NULL`: `outboxRepository.findUnpublished()`.
+1. Lee todos los `OutboxEventEntity` pendientes: `outboxRepository.findUnpublished()`.
 2. Para cada uno, publica con `kafkaTemplate.send(TOPIC, event.getAggregateId().toString(), event.getPayload()).get(2, TimeUnit.SECONDS)`.
 3. Solo actualiza `published_at` si el `get()` no lanza excepción: `event.setPublishedAt(Instant.now())`.
 4. Loguea el resultado de cada publicación con el `aggregateId` y el tipo de evento.
-   Si falla, loguea el error — el evento queda pendiente y el job lo reintentará en el siguiente ciclo.
+   Si falla, loguea el error — el evento queda pendiente y el job lo reintentará en 5 segundos.
 
 ### Paso 3 — Integra con el servicio de aplicación
 
-Modifica `OrderService.createOrder()` para que persista el evento en outbox **dentro
-de la misma `@Transactional`** que guarda la orden.
+Modifica `OrderService.createOrder()` para que use `OutboxEventPublisher.saveOrderCreatedEvent()`
+en lugar de `NaiveEventPublisher.publishOrderCreated()`. El método `saveOrderCreatedEvent()`
+debe ejecutarse **dentro de la misma `@Transactional`** que guarda la orden.
 
 ```bash
 # Verifica que el Outbox funciona deteniendo Kafka
-docker stop <kafka-container>
-# Crea una orden → BD confirma, OutboxEvent queda con published_at = null
-# Verifica en la BD:
-docker exec -it <postgres-container> psql -U shopflow -c "SELECT * FROM outbox_events;"
+docker stop shopflow-kafka
 
-# Levanta Kafka
-docker start <kafka-container>
-# Espera 5 segundos → el relay publica el evento pendiente
+# Crea una orden → la BD confirma, OutboxEvent queda con published_at = null
+curl -s -X POST http://localhost:8080/api/orders \
+  -H "Content-Type: application/json" \
+  -d '{"customerId":"a0000000-0000-0000-0000-000000000001","items":[{"productId":"b0000000-0000-0000-0000-000000000001","quantity":1,"unitPrice":"29.99"}]}'
+
+# Verifica que la orden Y el evento outbox existen en BD:
+docker exec -it shopflow-postgres psql -U shopflow \
+  -c "SELECT id, status FROM orders ORDER BY created_at DESC LIMIT 1;" \
+  -c "SELECT aggregate_id, event_type, published_at FROM outbox_events ORDER BY created_at DESC LIMIT 1;"
+
+# Levanta Kafka → el relay publica el evento en máximo 5 segundos
+docker start shopflow-kafka
+
 # Verifica que published_at se rellena:
-docker exec -it <postgres-container> psql -U shopflow -c "SELECT event_id, published_at FROM outbox_events;"
+docker exec -it shopflow-postgres psql -U shopflow \
+  -c "SELECT event_id, published_at FROM outbox_events ORDER BY created_at DESC LIMIT 1;"
 ```
 
 ---
@@ -128,6 +142,7 @@ Crea `KafkaConsumerConfig` en `shopflow-notifications` con:
 
 Cambia el consumer a ACK manual: el offset solo se confirma si el procesamiento fue exitoso.
 Configura `AckMode.MANUAL_IMMEDIATE` en el container factory.
+Elimina `spring.kafka.consumer.enable-auto-commit=true` del `application.properties`.
 
 ### Garantía 3 — Idempotencia
 
@@ -145,12 +160,12 @@ Añade al consumer:
 
 ```bash
 # Publica un payload malformado y verifica que va al DLT
-docker exec -it <kafka-container> kafka-console-producer.sh \
-  --broker-list localhost:9092 --topic order-events
+docker exec -it shopflow-kafka /opt/kafka/bin/kafka-console-producer.sh \
+  --bootstrap-server localhost:9092 --topic order-events
 > {"broken":"json
 
-# Verifica que aparece en el DLT (no bloquea la partición)
-docker exec -it <kafka-container> kafka-console-consumer.sh \
+# Verifica que aparece en el DLT (no bloquea la partición):
+docker exec -it shopflow-kafka /opt/kafka/bin/kafka-console-consumer.sh \
   --bootstrap-server localhost:9092 --topic order-events.DLT --from-beginning
 ```
 
@@ -167,7 +182,7 @@ los canales EDA del proyecto: qué tópicos tienen productor pero no consumidor 
 huérfanos), qué tópicos no tienen DLT configurado, y cuáles usan publicación directa
 sin Outbox.
 
-Formato de respuesta: tabla por tópico con columnas `Productor | Consumidor | DLT | Outbox`.
+Formato de respuesta: tabla por tópico con columnas `Tópico | Productor | Consumidor | DLT | Outbox`.
 Señala los eventos huérfanos con 🔴 y los tópicos sin DLT con 🟡.
 
 ### Parte B — Skill `/audit-events`
@@ -196,12 +211,12 @@ Documenta en el commit:
 
 ## Criterios de éxito ✅
 
+- `mvn test -pl shopflow-orders` en verde ✅
 - Orden creada con Kafka detenido: evento queda en `outbox_events` con `published_at = null` ✅
 - Kafka levantado de nuevo: relay publica el evento en máximo 5 segundos ✅
 - Payload malformado: va al tópico `order-events.DLT` después de 3 reintentos ✅
 - Mensaje duplicado (mismo `eventId`): se ignora sin reprocesar ✅
 - Logs del consumer incluyen `eventId` y `orderId` en cada línea ✅
-- `mvn test -pl shopflow-orders` y `mvn test -pl shopflow-notifications` en verde ✅
 
 ---
 
